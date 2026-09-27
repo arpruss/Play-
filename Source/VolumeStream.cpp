@@ -3,6 +3,10 @@
 #include "tcharx.h"
 #include "VolumeStream.h"
 
+#ifndef _MSC_VER
+# define min std::min
+#endif
+
 using namespace Framework;
 using namespace Framework::Win32;
 
@@ -68,7 +72,7 @@ uint64 CVolumeStream::Read(void* pBuffer, uint64 nSize)
 
 		uint64 nSectorOffset = (m_nPosition & (m_nSectorSize - 1));
 		uint64 nSectorRemain = (m_nSectorSize - nSectorOffset);
-		uint64 nCopy = std::min(nSize, nSectorRemain);
+		uint64 nCopy = min(nSize, nSectorRemain);
 
 		memcpy(pDst, pSrc + nSectorOffset, nCopy);
 
