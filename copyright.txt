@@ -1,0 +1,9 @@
+Long story:
+
+The original Play! core is Copyright (c) 2006-2026, Jean-Philip Desjardins 
+and is under a 2-clause BSD license. Partial GunCon2 support by kblood 
+was added from https://github.com/kblood/ps2-play-libretro/ and modified to
+work more fully by Alexander Pruss, who also modified the libretro core to
+compile under msys. Pruss hereby makes his changes public domain, but unfortunately
+the kblood patches are GPL3, which forces the Play! BSD license to be replaced by 
+GPL3 for this fork.

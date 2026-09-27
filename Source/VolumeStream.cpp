@@ -46,7 +46,7 @@ void CVolumeStream::Seek(int64 nDistance, STREAM_SEEK_DIRECTION nFrom)
 		m_nPosition += nDistance;
 		break;
 	case STREAM_SEEK_END:
-		throw std::exception("Operation not supported.");
+		throw std::runtime_error("Operation not supported.");
 		break;
 	}
 }
@@ -68,7 +68,7 @@ uint64 CVolumeStream::Read(void* pBuffer, uint64 nSize)
 
 		uint64 nSectorOffset = (m_nPosition & (m_nSectorSize - 1));
 		uint64 nSectorRemain = (m_nSectorSize - nSectorOffset);
-		uint64 nCopy = min(nSize, nSectorRemain);
+		uint64 nCopy = std::min(nSize, nSectorRemain);
 
 		memcpy(pDst, pSrc + nSectorOffset, nCopy);
 
@@ -82,7 +82,7 @@ uint64 CVolumeStream::Read(void* pBuffer, uint64 nSize)
 
 uint64 CVolumeStream::Write(const void* pBuffer, uint64 nSize)
 {
-	throw std::exception("Operation not-supported.");
+	throw std::runtime_error("Operation not supported.");
 }
 
 bool CVolumeStream::IsEOF()

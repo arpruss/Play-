@@ -9,6 +9,9 @@
 #include "GSH_OpenGL_Libretro.h"
 #include "SH_LibreAudio.h"
 #include "PH_Libretro_Input.h"
+#include "iop/IopBios.h"
+#include "iop/Iop_Usbd.h"
+#include "iop/UsbGunCon2Device.h"
 
 #include "PathUtils.h"
 #include "PtrStream.h"
@@ -19,6 +22,7 @@
 
 #include <vector>
 #include <cstdlib>
+#include <ctype.h>
 
 #define LOG_NAME "LIBRETRO"
 
@@ -40,6 +44,60 @@ struct retro_hw_render_callback g_hw_render
 int g_res_factor = 1;
 CGSHandler::PRESENTATION_MODE g_presentation_mode = CGSHandler::PRESENTATION_MODE::PRESENTATION_MODE_FIT;
 bool g_forceBilinearTextures = false;
+
+// Port currently assigned RETRO_DEVICE_LIGHTGUN, or -1 if none (see
+// retro_set_controller_port_device). GunCon2 is a fixed USB peripheral in
+// Play! (CGunCon2UsbDevice, always device 0 on the emulated USB bus), so this
+// only needs to remember which retropad *port* is driving it.
+static int g_lightgun_port = -1;
+
+struct lightgun_info_s {
+    char serial[10];
+    int width;
+    int height;    
+    int scale_x;
+    int scale_y;
+    int center_x;
+    int center_y;
+};
+
+static const struct lightgun_info_s lightgun_defaults = { "default__", 640,240,10000,10000,320,120 };
+
+const struct lightgun_info_s* lightgun_info = nullptr;
+
+static const struct lightgun_info_s lightgun_games[] = {
+    {"SLES50930", 640, 256, 9025, 9450, 390, 132}, // Dino Stalker (E, English)
+    {"SLES51095", 640, 256, 9025, 9450, 390, 132}, // Dino Stalker (E, French)
+    {"SLES51096", 640, 256, 9025, 9450, 390, 132}, // Dino Stalker (E, German)
+    {"SLUS20485", 640, 240, 9025, 9250, 390, 132}, // Dino Stalker (U)
+    {"SLUS20389", 640, 240, 8925, 9350, 422, 141}, // Endgame (U)
+    {"SLES50936", 512, 256, 11200, 10000, 320, 120}, // Endgame (E) (Guncon2 needs to be connected to USB port 2)
+    {"SLPM65139", 640, 240, 9000, 9150, 320, 120}, // Gun Survivor 3: Dino Crisis (J)
+    {"SLES52620", 640, 256, 8950, 11230, 390, 147}, // Guncom 2 (E)
+    {"SLES51289", 640, 256, 8450, 8900, 456, 164}, // Gunfighter 2 - Jesse James (E)
+    {"SLPS25165", 640, 240, 9025, 9800, 390, 138}, // Gunvari Collection (J) (480i)
+    {"SCES50889", 640, 256, 9025, 9450, 390, 169}, // Ninja Assault (E)
+    {"SLPS20218", 640, 240, 9000, 9200, 320, 134}, // Ninja Assault (J)
+    {"SLUS20492", 640, 240, 9025, 9250, 390, 132}, // Ninja Assault (U)
+    {"SLES50650", 640, 240, 8475, 9600, 454, 164}, // Resident Evil Survivor 2 (E)
+    {"SLES51448", 640, 240, 9025, 9500, 420, 132}, // Resident Evil - Dead Aim (E)
+    {"SLUS20669", 640, 240, 9025, 9350, 420, 132}, // Resident Evil - Dead Aim (U)
+    {"SLUS20619", 640, 256, 9025, 9175, 453, 154}, // Starsky & Hutch (U)
+    {"SCES50300", 640, 256, 9025, 10275, 390, 138}, // Time Crisis II (E)
+    {"SLPS20122", 640, 240, 9025, 9750, 390, 154}, // Time Crisis II (J)
+    {"SLPS20113", 640, 240, 9025, 9750, 390, 154}, // Time Crisis II (with GunCon 2) (J)
+    {"SLUS20219", 640, 240, 9025, 9750, 422, 170}, // Time Crisis 2 (U)
+    {"SCES51844", 640, 256, 9025, 10275, 390, 138}, // Time Crisis 3 (E)
+    {"SLUS20645", 640, 240, 9025, 9750, 390, 154}, // Time Crisis 3 (U)
+    {"SCES52530", 640, 256, 9025, 9900, 390, 153}, // Crisis Zone (E)
+    {"SLUS20927", 640, 240, 9025, 9900, 390, 153}, // Time Crisis - Crisis Zone (U) (480i)
+    {"SCES50411", 640, 256, 8980, 9990, 421, 138}, // Vampire Night (E)
+    {"SLPS25077", 640, 240, 9000, 9750, 422, 118}, // Vampire Night (J)
+    {"SLUS20221", 640, 228, 8980, 10250, 422, 124}, // Vampire Night (U)
+    {"SLES51229", 512, 256, 11015, 10000, 433, 159}, // Virtua Cop - Elite Edition (E,J) (480i)
+    {"SLPM62205", 512, 256, 11015, 10000, 433, 159}, // Virtua Cop Re-Birth (J) (480i)
+};
+
 
 static std::vector<struct retro_variable> m_vars =
     {
@@ -150,10 +208,11 @@ void SetupInputHandler()
 
 		static const struct retro_controller_description controllers[] = {
 		    {"PS2 DualShock2", RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0)},
+		    {"PS2 GunCon2", RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_LIGHTGUN, 0)},
 		};
 
 		static const struct retro_controller_info ports[] = {
-		    {controllers, 1},
+		    {controllers, 2},
 		    {NULL, 0},
 		};
 
@@ -176,7 +235,7 @@ void retro_get_system_info(struct retro_system_info* info)
 	info->library_name = "Play!";
 	info->library_version = PLAY_VERSION;
 	info->need_fullpath = true;
-	info->valid_extensions = "elf|iso|cso|isz|cue|chd";
+	info->valid_extensions = "elf|iso|cso|isz|cue|chd|bin";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info)
@@ -216,9 +275,49 @@ void retro_set_input_state(retro_input_state_t cb)
 	g_input_state_cb = cb;
 }
 
+static bool matches_serial(const char* serial, const char* name) {
+    while (*serial && *name) {
+        if (isalnum(*name)) {
+            if (toupper(*name) != *serial)
+                return false;
+            name++;
+            serial++;
+        }
+        else {
+            name++;
+        }
+    }
+    return *serial == 0;
+}
+
+static void setup_lightgun(const char* name) {
+    if (name != nullptr) {
+        for (int i=0; i<sizeof(lightgun_games)/sizeof(*lightgun_games); i++) {
+            if (matches_serial(lightgun_games[i].serial, name)) {
+                lightgun_info = &(lightgun_games[i]);
+                return;
+            }
+        }
+    }
+    
+    lightgun_info = &lightgun_defaults;
+}
+
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
 	CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
+
+	if((device & RETRO_DEVICE_MASK) == RETRO_DEVICE_LIGHTGUN)
+	{
+		g_lightgun_port = static_cast<int>(port);
+        if (m_virtualMachine) {
+            setup_lightgun(m_virtualMachine->m_ee->m_os->GetExecutableName());
+        }
+	}
+	else if(g_lightgun_port == static_cast<int>(port))
+	{
+		g_lightgun_port = -1;
+	}
 }
 
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb)
@@ -418,6 +517,58 @@ void checkVarsUpdates()
 	updates = false;
 }
 
+// Polls RETRO_DEVICE_LIGHTGUN for `port` and pushes the result into
+// CGunCon2UsbDevice. Screen coordinates come back from RetroArch as
+// RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X/Y, full range [-0x8000, 0x7fff] mapped
+// to the visible display area; we rescale it to the appropriate game.
+static void UpdateGunConInputState(unsigned port)
+{
+	auto iopOs = dynamic_cast<CIopBios*>(m_virtualMachine->m_iop->m_bios.get());
+	if(!iopOs) return;
+
+	auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>();
+	if(!device) return;
+
+	bool offscreen = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) != 0;
+	bool trigger = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER) != 0;
+	bool reload = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD) != 0;
+
+	uint32 buttonMask = 0;
+	if(trigger && !offscreen) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_TRIGGER);
+	if((trigger || reload) && offscreen) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_SHOOT_OFFSCREEN);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_START);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SELECT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_SELECT);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_A);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_B)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_B);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_C)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_C);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_UP);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_DOWN);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_LEFT);
+	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_RIGHT);
+	if(g_input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_CALIBRATE);
+
+	if(offscreen)
+	{
+		// (0, 0) is the protocol's reserved offscreen position.
+		device->SetGunState(0, 0, buttonMask);
+		return;
+	}
+
+	int32 screenX = static_cast<int32>(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X));
+	int32 screenY = static_cast<int32>(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y));
+    
+	int32 x = ( (screenX * lightgun_info->width) / 0x100 * lightgun_info->scale_x + 0x100 * 5000) / (0x100 * 10000)
+                    + lightgun_info->center_x;
+	int32 y = ( (screenY * lightgun_info->height) / 0x100 * lightgun_info->scale_y + 0x100 * 5000) / (0x100 * 10000)
+                    + lightgun_info->center_y;
+
+	// Avoid colliding with the reserved (0,0) offscreen sentinel for an
+	// on-screen shot that happens to land exactly at the top-left pixel.
+	if(x == 0 && y == 0) x = 1;
+
+	device->SetGunState(x, y, buttonMask);
+}
+
 void retro_run()
 {
 	// CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
@@ -441,6 +592,8 @@ void retro_run()
 			m_virtualMachine->Resume();
 			first_run = true;
 			CLog::GetInstance().Print(LOG_NAME, "%s\n", "Start Game");
+            if (g_lightgun_port >= 0)
+                setup_lightgun(m_virtualMachine->m_ee->m_os->GetExecutableName());
 		}
 	}
 
@@ -449,6 +602,11 @@ void retro_run()
 		auto pad = m_virtualMachine->GetPadHandler();
 		if(pad)
 			static_cast<CPH_Libretro_Input*>(pad)->UpdateInputState();
+
+		if(g_lightgun_port >= 0)
+		{
+			UpdateGunConInputState(static_cast<unsigned>(g_lightgun_port));
+		}
 
 		if(m_virtualMachine->GetSoundHandler())
 			static_cast<CSH_LibreAudio*>(m_virtualMachine->GetSoundHandler())->ProcessBuffer();
