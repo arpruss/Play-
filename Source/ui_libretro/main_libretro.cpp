@@ -25,7 +25,6 @@
 #define LOG_NAME "LIBRETRO"
 
 #define MAX_GUNS 1 // TODO: support more than one
-static FILE* mylog;
 
 static CPS2VM* m_virtualMachine = nullptr;
 static bool first_run = false;
@@ -258,8 +257,6 @@ static retro_log_printf_t log_cb = NULL;
 void retro_set_environment(retro_environment_t cb)
 {
 	g_environ_cb = cb;
-    mylog = fopen("c:/tmp/log", "w");
-    fprintf(mylog, "open log");
 }
 
 void retro_set_input_poll(retro_input_poll_t cb)
@@ -309,7 +306,6 @@ static void setup_lightgun(const char* name)
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
 	CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
-    fprintf(mylog,"port dev %d %x\n", port,device);
             
     if (port < MAX_GUNS) 
     {
@@ -524,7 +520,6 @@ void checkVarsUpdates()
 static void update_gun(unsigned port) 
 {
     // TODO: support more than one gun device
-    fprintf(mylog, "update_gun\n");
 	auto iopOs = dynamic_cast<CIopBios*>(m_virtualMachine->m_iop->m_bios.get());
     auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>();
     
@@ -574,7 +569,9 @@ static void update_gun(unsigned port)
 	int32 y = ( (screenY * lightgun_info->height) / 0x100 * lightgun_info->scale_y + 0x100 * 5000) / (0x100 * 10000)
                     + lightgun_info->center_y;
                     
-    fprintf(mylog, "update_gun %x %d %d\n", buttons,x,y);
+    if (x == 0 && y == 0)
+        x = 1; // 0,0 means offscreen
+                    
     device->SetGunState(buttons,x,y);
 }
 
