@@ -13,10 +13,6 @@ using namespace Iop;
 #define STATE_REG_TRANSFERCB ("transferCb")
 #define STATE_REG_TRANSFERCBARG ("transferCbArg")
 
-// Namco GunCon 2 (real hardware IDs, from PCSX2's usb-lightgun/guncon2.cpp)
-#define GUNCON2_VENDOR_ID (0x0b9a)
-#define GUNCON2_PRODUCT_ID (0x016a)
-
 CGunCon2UsbDevice::CGunCon2UsbDevice(CIopBios& bios, uint8* ram)
     : m_bios(bios)
     , m_ram(ram)
@@ -50,38 +46,7 @@ uint16 CGunCon2UsbDevice::GetId() const
 
 const char* CGunCon2UsbDevice::GetLldName() const
 {
-	return "usbgun"; // guncon2";
-}
-
-void CGunCon2UsbDevice::Send()
-{
-    uint8* buffer = m_ram + m_transferBufferPtr;
-    // GunCon2Out report: u16 buttons (active low), s16 pos_x, s16 pos_y — all little-endian.
-    uint16 buttons = static_cast<uint16>(~m_buttonState);
-    uint32_t x = m_posX;
-    uint32_t y = m_posY;
-
-    if ((m_buttonState & (1U << BUTTON_CALIBRATE)) && m_calibration_timer == 0) {
-        buttons &= ~(1U << BUTTON_TRIGGER);        
-        m_calibration_timer = 12;
-    }
-    else if (m_calibration_timer > 0) {
-        buttons &= ~(1U << BUTTON_TRIGGER);
-        if (m_calibration_timer < 5) {
-            x = 0;
-            y = 0;
-        }
-        m_calibration_timer--;
-    }
-    buffer[0] = static_cast<uint8>(buttons & 0xFF);
-    buffer[1] = static_cast<uint8>((buttons >> 8) & 0xFF);
-    buffer[2] = static_cast<uint8>(x & 0xFF);
-    buffer[3] = static_cast<uint8>((x >> 8) & 0xFF);
-    buffer[4] = static_cast<uint8>(y & 0xFF);
-    buffer[5] = static_cast<uint8>((y >> 8) & 0xFF);
-    m_bios.TriggerCallback(m_transferCb, 0, m_transferSize, m_transferCbArg);
-    m_nextTransferTicks = 0;
-    m_transferCb = 0;
+	return "usbgun";
 }
 
 void CGunCon2UsbDevice::CountTicks(uint32 ticks)
@@ -89,18 +54,42 @@ void CGunCon2UsbDevice::CountTicks(uint32 ticks)
 	if(m_nextTransferTicks != 0)
 	{
 		m_nextTransferTicks -= ticks;
-		if(m_nextTransferTicks <= 0) Send();
+		if(m_nextTransferTicks <= 0)
+		{
+			uint8* buffer = m_ram + m_transferBufferPtr;
+            uint16 buttons = ~m_buttonState;
+            uint16 x = m_x;
+            uint16 y = m_y;
+            if ((m_buttonState & GUN_CALIBRATE) && m_calibration_timer == 0) {
+                buttons &= ~GUN_TRIGGER;        
+                m_calibration_timer = 12;
+            }
+            else if (m_calibration_timer > 0) {
+                buttons &= ~GUN_TRIGGER;
+                if (m_calibration_timer < 5) {
+                    x = 0;
+                    y = 0;
+                }
+                m_calibration_timer--;
+            }
+			buffer[0] = buttons & 0xFF;
+			buffer[1] = buttons >> 8;
+			buffer[2] = x & 0xFF;
+			buffer[3] = (x >> 8) & 0xFF;
+			buffer[4] = y & 0xFF;
+			buffer[5] = (y >> 8) & 0xFF;
+			m_bios.TriggerCallback(m_transferCb, 0, m_transferSize, m_transferCbArg);
+			m_nextTransferTicks = 0;
+			m_transferCb = 0;
+		}
 	}
 }
 
-void CGunCon2UsbDevice::SetGunState(int32 x, int32 y, uint32 buttonMask)
+void CGunCon2UsbDevice::SetGunState(uint32_t buttons, uint32_t x, uint32_t y)
 {
-	// (0, 0) is reserved by the protocol for "offscreen" — matches libretro's
-	// RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN convention closely enough that the
-	// caller can just clamp to (0,0) for an offscreen shot.
-	m_posX = static_cast<int16>(x);
-	m_posY = static_cast<int16>(y);
-	m_buttonState = buttonMask;
+    m_buttonState = buttons;
+    m_x = x;
+    m_y = y;
 }
 
 void CGunCon2UsbDevice::OnLldRegistered()
@@ -118,8 +107,8 @@ uint32 CGunCon2UsbDevice::ScanStaticDescriptor(uint32 deviceId, uint32 descripto
 	{
 		auto descriptor = reinterpret_cast<Usb::DEVICE_DESCRIPTOR*>(m_ram + m_descriptorMemPtr);
 		descriptor->base.descriptorType = Usb::DESCRIPTOR_TYPE_DEVICE;
-		descriptor->vendorId = GUNCON2_VENDOR_ID;
-		descriptor->productId = GUNCON2_PRODUCT_ID;
+		descriptor->vendorId = 0x0b9a;
+		descriptor->productId = 0x016a;
 		result = m_descriptorMemPtr;
 	}
 	break;
@@ -144,10 +133,10 @@ uint32 CGunCon2UsbDevice::ScanStaticDescriptor(uint32 deviceId, uint32 descripto
 		auto descriptor = reinterpret_cast<Usb::ENDPOINT_DESCRIPTOR*>(m_ram + m_descriptorMemPtr);
 		if(descriptor->base.descriptorType != Usb::DESCRIPTOR_TYPE_ENDPOINT)
 		{
-			descriptor->base.descriptorType = Usb::DESCRIPTOR_TYPE_ENDPOINT;
-			descriptor->endpointAddress = 0x81;
-			descriptor->attributes = 3; //Interrupt transfer type
 			descriptor->maxPacketSize = 8;
+			descriptor->base.descriptorType = Usb::DESCRIPTOR_TYPE_ENDPOINT;
+			descriptor->endpointAddress = 0x80;
+			descriptor->attributes = 3; //Interrupt transfer type
 			result = m_descriptorMemPtr;
 		}
 	}
@@ -172,10 +161,9 @@ int32 CGunCon2UsbDevice::OpenPipe(uint32 deviceId, uint32 descriptorPtr)
 
 int32 CGunCon2UsbDevice::TransferPipe(uint32 pipeId, uint32 bufferPtr, uint32 size, uint32 optionPtr, uint32 doneCb, uint32 arg)
 {
-    uint16 deviceId = (pipeId & 0xFFFF);
+	uint16 deviceId = (pipeId & 0xFFFF);
 	uint16 internalPipeId = (pipeId >> 16) & 0xFFF;
 	assert(deviceId == DEVICE_ID);
-
 	switch(internalPipeId)
 	{
 	case CONTROL_PIPE_ID:

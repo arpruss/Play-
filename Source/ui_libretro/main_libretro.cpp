@@ -9,7 +9,6 @@
 #include "GSH_OpenGL_Libretro.h"
 #include "SH_LibreAudio.h"
 #include "PH_Libretro_Input.h"
-#include "iop/IopBios.h"
 #include "iop/Iop_Usbd.h"
 #include "iop/UsbGunCon2Device.h"
 
@@ -22,12 +21,15 @@
 
 #include <vector>
 #include <cstdlib>
-#include <ctype.h>
 
 #define LOG_NAME "LIBRETRO"
 
+#define MAX_GUNS 1 // TODO: support more than one
+static FILE* mylog;
+
 static CPS2VM* m_virtualMachine = nullptr;
 static bool first_run = false;
+static bool port_is_gun[MAX_GUNS];
 
 bool libretro_supports_bitmasks = false;
 retro_video_refresh_t g_video_cb;
@@ -44,12 +46,6 @@ struct retro_hw_render_callback g_hw_render
 int g_res_factor = 1;
 CGSHandler::PRESENTATION_MODE g_presentation_mode = CGSHandler::PRESENTATION_MODE::PRESENTATION_MODE_FIT;
 bool g_forceBilinearTextures = false;
-
-// Port currently assigned RETRO_DEVICE_LIGHTGUN, or -1 if none (see
-// retro_set_controller_port_device). GunCon2 is a fixed USB peripheral in
-// Play! (CGunCon2UsbDevice, always device 0 on the emulated USB bus), so this
-// only needs to remember which retropad *port* is driving it.
-static int g_lightgun_port = -1;
 
 struct lightgun_info_s {
     char serial[10];
@@ -97,7 +93,6 @@ static const struct lightgun_info_s lightgun_games[] = {
     {"SLES51229", 512, 256, 11015, 10000, 433, 159}, // Virtua Cop - Elite Edition (E,J) (480i)
     {"SLPM62205", 512, 256, 11015, 10000, 433, 159}, // Virtua Cop Re-Birth (J) (480i)
 };
-
 
 static std::vector<struct retro_variable> m_vars =
     {
@@ -200,7 +195,7 @@ void SetupInputHandler()
 		        {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "L3"},
 		        {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R1"},
 		        {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "R2"},
-		        {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3 / Gun Calibrate"},
+		        {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3 / Calibrate Gun"},
 		        {0},
 		    };
 
@@ -235,7 +230,7 @@ void retro_get_system_info(struct retro_system_info* info)
 	info->library_name = "Play!";
 	info->library_version = PLAY_VERSION;
 	info->need_fullpath = true;
-	info->valid_extensions = "elf|iso|cso|isz|cue|chd|bin";
+	info->valid_extensions = "elf|iso|cso|isz|cue|chd";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info)
@@ -258,9 +253,13 @@ void retro_set_video_refresh(retro_video_refresh_t cb)
 	g_video_cb = cb;
 }
 
+static retro_log_printf_t log_cb = NULL;
+
 void retro_set_environment(retro_environment_t cb)
 {
 	g_environ_cb = cb;
+    mylog = fopen("c:/tmp/log", "w");
+    fprintf(mylog, "open log");
 }
 
 void retro_set_input_poll(retro_input_poll_t cb)
@@ -275,7 +274,7 @@ void retro_set_input_state(retro_input_state_t cb)
 	g_input_state_cb = cb;
 }
 
-static bool matches_serial(const char* serial, const char* name) {
+static bool match_serial(const char* serial, const char* name) {
     while (*serial && *name) {
         if (isalnum(*name)) {
             if (toupper(*name) != *serial)
@@ -290,10 +289,14 @@ static bool matches_serial(const char* serial, const char* name) {
     return *serial == 0;
 }
 
-static void setup_lightgun(const char* name) {
-    if (name != nullptr) {
-        for (int i=0; i<sizeof(lightgun_games)/sizeof(*lightgun_games); i++) {
-            if (matches_serial(lightgun_games[i].serial, name)) {
+static void setup_lightgun(const char* name) 
+{
+    if (name != nullptr) 
+    {
+        for (int i=0; i<sizeof(lightgun_games)/sizeof(*lightgun_games); i++) 
+        {
+            if (match_serial(lightgun_games[i].serial, name)) 
+            {
                 lightgun_info = &(lightgun_games[i]);
                 return;
             }
@@ -306,18 +309,19 @@ static void setup_lightgun(const char* name) {
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
 	CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
-
-	if((device & RETRO_DEVICE_MASK) == RETRO_DEVICE_LIGHTGUN)
-	{
-		g_lightgun_port = static_cast<int>(port);
-        if (m_virtualMachine) {
+    fprintf(mylog,"port dev %d %x\n", port,device);
+            
+    if (port < MAX_GUNS) 
+    {
+        if ((device & RETRO_DEVICE_MASK) == RETRO_DEVICE_LIGHTGUN) 
+        {
+            port_is_gun[port] = true;
             setup_lightgun(m_virtualMachine->m_ee->m_os->GetExecutableName());
         }
-	}
-	else if(g_lightgun_port == static_cast<int>(port))
-	{
-		g_lightgun_port = -1;
-	}
+        else {
+            port_is_gun[port] = false;
+        }
+    }
 }
 
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb)
@@ -517,43 +521,51 @@ void checkVarsUpdates()
 	updates = false;
 }
 
-// Polls RETRO_DEVICE_LIGHTGUN for `port` and pushes the result into
-// CGunCon2UsbDevice. Screen coordinates come back from RetroArch as
-// RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X/Y, full range [-0x8000, 0x7fff] mapped
-// to the visible display area; we rescale it to the appropriate game.
-static void UpdateGunConInputState(unsigned port)
+static void update_gun(unsigned port) 
 {
+    // TODO: support more than one gun device
+    fprintf(mylog, "update_gun\n");
 	auto iopOs = dynamic_cast<CIopBios*>(m_virtualMachine->m_iop->m_bios.get());
-	if(!iopOs) return;
+    auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>();
+    
+    uint32_t buttons = 0;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_A;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_B)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_B;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_C)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_C;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_UP;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_RIGHT;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_DOWN;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_LEFT;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SELECT)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_SELECT;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_START;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_START;
+    if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_TRIGGER;
+    if (g_input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) 
+        buttons |= Iop::CGunCon2UsbDevice::GUN_CALIBRATE;
 
-	auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>();
-	if(!device) return;
-
-	bool offscreen = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) != 0;
-	bool trigger = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_TRIGGER) != 0;
-	bool reload = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD) != 0;
-
-	uint32 buttonMask = 0;
-	if(trigger && !offscreen) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_TRIGGER);
-	if((trigger || reload) && offscreen) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_SHOOT_OFFSCREEN);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_START)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_START);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SELECT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_SELECT);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_A);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_B)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_B);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_C)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_C);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_UP)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_UP);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_DOWN)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_DOWN);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_LEFT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_LEFT);
-	if(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_DPAD_RIGHT)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_DPAD_RIGHT);
-	if(g_input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) buttonMask |= (1 << Iop::CGunCon2UsbDevice::BUTTON_CALIBRATE);
-
-	if(offscreen)
-	{
-		// (0, 0) is the protocol's reserved offscreen position.
-		device->SetGunState(0, 0, buttonMask);
-		return;
-	}
-
+    int offscreen = g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN);
+    int offscreen_shot = g_input_state_cb( port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_RELOAD );
+    
+    if (offscreen_shot)
+        buttons |= Iop::CGunCon2UsbDevice::GUN_TRIGGER;
+    
+    if (offscreen || offscreen_shot) 
+    {
+        device->SetGunState(buttons,0,0);
+        return;
+    }
+    
 	int32 screenX = static_cast<int32>(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X));
 	int32 screenY = static_cast<int32>(g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y));
     
@@ -561,12 +573,9 @@ static void UpdateGunConInputState(unsigned port)
                     + lightgun_info->center_x;
 	int32 y = ( (screenY * lightgun_info->height) / 0x100 * lightgun_info->scale_y + 0x100 * 5000) / (0x100 * 10000)
                     + lightgun_info->center_y;
-
-	// Avoid colliding with the reserved (0,0) offscreen sentinel for an
-	// on-screen shot that happens to land exactly at the top-left pixel.
-	if(x == 0 && y == 0) x = 1;
-
-	device->SetGunState(x, y, buttonMask);
+                    
+    fprintf(mylog, "update_gun %x %d %d\n", buttons,x,y);
+    device->SetGunState(buttons,x,y);
 }
 
 void retro_run()
@@ -590,10 +599,18 @@ void retro_run()
 				m_virtualMachine->m_ee->m_os->BootFromFile(m_bootCommand.path);
 			}
 			m_virtualMachine->Resume();
+            bool have_lightgun = false;
+            for (int i=0; i<MAX_GUNS; i++)
+            {
+                if (port_is_gun[i]) 
+                {
+                    have_lightgun = true;
+                    setup_lightgun(m_virtualMachine->m_ee->m_os->GetExecutableName());
+                    break;
+                }
+            }
 			first_run = true;
 			CLog::GetInstance().Print(LOG_NAME, "%s\n", "Start Game");
-            if (g_lightgun_port >= 0)
-                setup_lightgun(m_virtualMachine->m_ee->m_os->GetExecutableName());
 		}
 	}
 
@@ -603,16 +620,16 @@ void retro_run()
 		if(pad)
 			static_cast<CPH_Libretro_Input*>(pad)->UpdateInputState();
 
-		if(g_lightgun_port >= 0)
-		{
-			UpdateGunConInputState(static_cast<unsigned>(g_lightgun_port));
-		}
-
 		if(m_virtualMachine->GetSoundHandler())
 			static_cast<CSH_LibreAudio*>(m_virtualMachine->GetSoundHandler())->ProcessBuffer();
 
 		if(m_virtualMachine->GetGSHandler())
 			m_virtualMachine->GetGSHandler()->ProcessSingleFrame();
+        
+        for(int i=0;i<MAX_GUNS;i++) {
+            if (port_is_gun[i])
+                update_gun(i);
+        }
 	}
 }
 
