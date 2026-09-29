@@ -134,7 +134,7 @@ static void update_gun(CPS2VM* vm, unsigned port)
     
     if (offscreen || offscreen_shot) 
     {
-        device->SetGunState(buttons,0,0);
+        device->SetGunState(buttons,0,0,true);
         return;
     }
     
@@ -146,10 +146,7 @@ static void update_gun(CPS2VM* vm, unsigned port)
 	int32 y = ( (screenY * lightgun_info->height) / 0x100 * lightgun_info->scale_y + 0x100 * 5000) / (0x100 * 10000)
                     + lightgun_info->center_y;
                     
-    if (x == 0 && y == 0)
-        x = 1; // 0,0 means offscreen
-                    
-    device->SetGunState(buttons,x,y);
+    device->SetGunState(buttons,x,y,false);
 }
 
 void update_guns(CPS2VM* vm) 

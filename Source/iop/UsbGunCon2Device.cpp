@@ -58,6 +58,8 @@ void CGunCon2UsbDevice::CountTicks(uint32 ticks)
 		{
 			uint8* buffer = m_ram + m_transferBufferPtr;
             uint16 buttons = ~m_buttonState;
+            if (m_progressive)
+                buttons &= ~GUN_PROGRESSIVE;
             uint16 x = m_x;
             uint16 y = m_y;
             if ((m_buttonState & GUN_CALIBRATE) && m_calibration_timer == 0) {
@@ -85,11 +87,25 @@ void CGunCon2UsbDevice::CountTicks(uint32 ticks)
 	}
 }
 
-void CGunCon2UsbDevice::SetGunState(uint32_t buttons, uint32_t x, uint32_t y)
+void CGunCon2UsbDevice::SetGunState(uint32 buttons, int32 x, int32 y, bool offscreen)
 {
     m_buttonState = buttons;
-    m_x = x;
-    m_y = y;
+    if (offscreen) 
+    {
+        m_x = 0;
+        m_y = 0;
+    }
+    else 
+    {
+        m_x = x - m_dx;
+        m_y = y - m_dy;
+        if (m_x < 0)
+            m_x = 0;
+        if (m_y < 0)
+            m_y = 0;
+        if (m_x == 0 && m_y == 0)
+            m_x = 1;
+    }
 }
 
 void CGunCon2UsbDevice::OnLldRegistered()
@@ -159,6 +175,19 @@ int32 CGunCon2UsbDevice::OpenPipe(uint32 deviceId, uint32 descriptorPtr)
 	}
 }
 
+void CGunCon2UsbDevice::SetParameters(unsigned char* data) 
+{
+    m_dx = static_cast<int32>(static_cast<int16>(static_cast<uint16>(data[0]) | (static_cast<uint16>(data[1]) << 8)));
+    m_dy = static_cast<int32>(static_cast<int16>(static_cast<uint16>(data[2]) | (static_cast<uint16>(data[3]) << 8)));
+    
+    m_progressive = ((GUN_PROGRESSIVE>>8) & data[5]) != 0;
+    if (m_progressive)
+    {
+        m_dx /= 2;
+        m_dy /= 2;
+    }
+}
+
 int32 CGunCon2UsbDevice::TransferPipe(uint32 pipeId, uint32 bufferPtr, uint32 size, uint32 optionPtr, uint32 doneCb, uint32 arg)
 {
 	uint16 deviceId = (pipeId & 0xFFFF);
@@ -167,6 +196,9 @@ int32 CGunCon2UsbDevice::TransferPipe(uint32 pipeId, uint32 bufferPtr, uint32 si
 	switch(internalPipeId)
 	{
 	case CONTROL_PIPE_ID:
+        if (size == 6 && *(unsigned char*)(m_ram+optionPtr) == 0x21 && *(unsigned char*)(m_ram+optionPtr+1) == 0x09) {
+            SetParameters((unsigned char*)(m_ram+bufferPtr));
+        }
 		m_bios.TriggerCallback(doneCb, 0, size, arg);
 		return 0;
 		break;

@@ -25,6 +25,7 @@ namespace Iop
             GUN_RIGHT = 0x0020,
             GUN_DOWN = 0x0040,
             GUN_LEFT = 0x0080,
+            GUN_PROGRESSIVE = 0x0100,
             GUN_TRIGGER = 0x2000,
             GUN_SELECT = 0x4000,
             GUN_START = 0x8000,
@@ -46,8 +47,10 @@ namespace Iop
 		uint32 ScanStaticDescriptor(uint32, uint32, uint32) override;
 		int32 OpenPipe(uint32, uint32) override;
 		int32 TransferPipe(uint32, uint32, uint32, uint32, uint32, uint32) override;
+        
+        void SetParameters(unsigned char*);
 
-		void SetGunState(uint32, uint32, uint32);
+		void SetGunState(uint32, int32, int32, bool);
 
 	private:
 		CIopBios& m_bios;
@@ -63,5 +66,8 @@ namespace Iop
 		uint32 m_transferSize = 0;
 		uint32 m_transferCb = 0;
 		uint32 m_transferCbArg = 0;
+        int32 m_dx = 0;
+        int32 m_dy = 0;
+        bool m_progressive = 0;
 	};
 }
