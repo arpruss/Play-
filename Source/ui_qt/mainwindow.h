@@ -115,6 +115,10 @@ private:
 	std::shared_ptr<CInputProviderQtMouse> m_qtMouseInputProvider;
 	LastOpenCommand m_lastOpenCommand;
 	fs::path m_lastPath;
+    bool m_guncon2 = false;
+    uint32_t m_guncon2_buttons = 0;
+    int32_t m_guncon2_x = 0;
+    int32_t m_guncon2_y = 0;
 
 	Framework::CSignal<void()>::Connection m_OnExecutableChangeConnection;
 	CPS2VM::NewFrameEvent::Connection m_OnNewFrameConnection;
