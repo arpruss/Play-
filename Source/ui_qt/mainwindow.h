@@ -119,6 +119,7 @@ private:
     uint32_t m_guncon2_buttons = 0;
     int32_t m_guncon2_x = 0;
     int32_t m_guncon2_y = 0;
+    bool m_showCursor = true;
 
 	Framework::CSignal<void()>::Connection m_OnExecutableChangeConnection;
 	CPS2VM::NewFrameEvent::Connection m_OnNewFrameConnection;
@@ -167,6 +168,7 @@ private slots:
 	void on_actionVFS_Manager_triggered();
 	void on_actionController_Manager_triggered();
 	void on_actionToggleFullscreen_triggered();
+	void on_actionToggleCursor_triggered();
 	void on_actionCapture_Screen_triggered();
 	void HandleOnExecutableChange();
 	void on_actionList_Bootables_triggered();

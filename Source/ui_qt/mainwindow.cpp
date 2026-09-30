@@ -117,6 +117,9 @@ MainWindow::MainWindow(QWidget* parent)
 	//Add actions to window to make sure they can be activated with shortcuts in fullscreen mode.
 	addAction(ui->actionPause_Resume);
 	addAction(ui->actionToggleFullscreen);
+	addAction(ui->actionToggleCursor);
+    ui->actionToggleCursor->setChecked(true);
+	ui->actionToggleCursor->setShortcut(QKeySequence(Qt::Key_F11));
 
 #ifdef WIN32
 	ui->actionToggleFullscreen->setShortcut(QKeySequence(Qt::ALT + Qt::Key_Return));
@@ -1022,6 +1025,15 @@ void MainWindow::outputWindow_mouseReleaseEvent(QMouseEvent* ev)
 	{
 		m_virtualMachine->ReleaseScreenPosition();
 	}
+}
+
+void MainWindow::on_actionToggleCursor_triggered()
+{
+    m_showCursor = ! m_showCursor;
+    if (m_showCursor)
+        m_outputwindow->unsetCursor();
+    else
+        m_outputwindow->setCursor(Qt::BlankCursor);
 }
 
 void MainWindow::on_actionToggleFullscreen_triggered()
