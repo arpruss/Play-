@@ -16,6 +16,7 @@
 
 #include "filesystem_def.h"
 #include "DefaultAppConfig.h"
+#include "ui_shared/GunCon2Utils.h"
 #include "guncon2.h"
 
 #include <vector>

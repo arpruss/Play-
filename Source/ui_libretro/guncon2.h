@@ -7,5 +7,4 @@
 void register_guns(CPS2VM* vm);
 void set_gun(unsigned port, bool isGun);
 void update_guns(CPS2VM* vm);
-void load_gun_info(const char* gameName);
 #endif
