@@ -16,6 +16,8 @@ struct lightgun_info_s {
 
 extern const struct lightgun_info_s* g_lightgun_info;
 bool load_gun_info(const char* gameName);
-void register_guncon2(CPS2VM* vm, int instance);
+void register_guncon2(CPS2VM* vm, int instance, bool padMode);
 void guncon2_set_state(CPS2VM* vm, int instance, uint32 buttons, int32 x, int32 y, bool offscreen);
+void guncon2_set_position(CPS2VM* vm, int instance, int32 x, int32 y, bool offscreen);
+void guncon2_set_button(CPS2VM* vm, int instance, PS2::CControllerInfo::BUTTON button, bool pressed);
 #endif

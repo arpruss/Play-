@@ -282,6 +282,8 @@ set(COMMON_SRC_FILES
 	input/InputBindingManager.cpp
 	input/InputBindingManager.h
 	input/InputProvider.h
+	input/GunCon2Utils.cpp
+	input/GunCon2Utils.h
 	input/PH_GenericInput.cpp
 	input/PH_GenericInput.h
 	iop/ArgumentIterator.cpp

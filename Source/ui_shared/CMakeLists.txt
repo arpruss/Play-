@@ -62,8 +62,6 @@ set(SHARED_UI_SRC_FILES
 	BootablesProcesses.h
 	BootableUtils.cpp
 	BootableUtils.h
-    GunCon2Utils.cpp
-    GunCon2Utils.h
 	TheGamesDbClient.cpp
 	TheGamesDbClient.h
 	StatsManager.cpp

@@ -1,5 +1,5 @@
 #include "ext/libretro.h"
-#include "ui_shared/GunCon2Utils.h"
+#include "input/GunCon2Utils.h"
 #include "guncon2.h"
 #include "PS2VM.h"
 #include "iop/Iop_Usbd.h"
@@ -98,7 +98,7 @@ void update_guns(CPS2VM* vm)
             update_gun(vm, port);
 }
 
-void register_guns(CPS2VM* vm) 
+void register_guns(CPS2VM* vm, bool padMode) 
 {
     int needed = 0;
     for (int port=0; port<MAX_GUNS; port++)
@@ -107,7 +107,7 @@ void register_guns(CPS2VM* vm)
         
     // TODO: if a gun is unregistered, remove it somehow
     for (int i=0; i<needed; i++) 
-        register_guncon2(vm, i);
+        register_guncon2(vm, i, padMode);
     
     if (registered < needed)
         registered = needed;

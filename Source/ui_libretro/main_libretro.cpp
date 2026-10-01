@@ -16,7 +16,7 @@
 
 #include "filesystem_def.h"
 #include "DefaultAppConfig.h"
-#include "ui_shared/GunCon2Utils.h"
+#include "input/GunCon2Utils.h"
 #include "guncon2.h"
 
 #include <vector>
@@ -232,7 +232,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
     {
         set_gun(port, true);
         if (m_virtualMachine)
-            register_guns(m_virtualMachine);
+            register_guns(m_virtualMachine, false);
     }
     else {
         set_gun(port, false);
@@ -459,7 +459,7 @@ void retro_run()
 			m_virtualMachine->Resume();
             
             load_gun_info(m_virtualMachine->m_ee->m_os->GetExecutableName());
-            register_guns(m_virtualMachine);
+            register_guns(m_virtualMachine, false);
 			first_run = true;
 			CLog::GetInstance().Print(LOG_NAME, "%s\n", "Start Game");
 		}
