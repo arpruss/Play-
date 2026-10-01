@@ -4,7 +4,7 @@
 
 #define MAX_GUNS 2 // can be 1 or 2
 
-void register_guns(CPS2VM* vm);
+void register_guns(CPS2VM* vm, bool padMode);
 void set_gun(unsigned port, bool isGun);
 void update_guns(CPS2VM* vm);
 #endif

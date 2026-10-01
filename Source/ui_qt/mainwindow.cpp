@@ -8,7 +8,7 @@
 #include "ui_shared/ArcadeUtils.h"
 #include "ui_shared/BootablesProcesses.h"
 #include "ui_shared/StatsManager.h"
-#include "ui_shared/GunCon2Utils.h"
+#include "input/GunCon2Utils.h"
 #include "QtUtils.h"
 #include "iop/Iop_Usbd.h"
 #include "iop/UsbGunCon2Device.h"
@@ -24,6 +24,7 @@
 
 #include <ctime>
 
+#include <QDebug>
 #include <QDateTime>
 #include <QFileDialog>
 #include <QTimer>
@@ -847,10 +848,8 @@ void MainWindow::HandleOnExecutableChange()
 	auto titleString = QString("Play! - [ %1 ] - %2").arg(m_virtualMachine->m_ee->m_os->GetExecutableName(), QString(PLAY_VERSION));
 	setWindowTitle(titleString);
 	ui->bootablesView->AsyncResetModel(true);
-    m_guncon2 = load_gun_info(m_virtualMachine->m_ee->m_os->GetExecutableName());
-    if (m_guncon2)
-        register_guncon2(m_virtualMachine, 0); 
-    // TODO: else unregister
+    m_guncon2_game = load_gun_info(m_virtualMachine->m_ee->m_os->GetExecutableName());
+    register_guncon2(m_virtualMachine, 0, true); 
 }
 
 bool MainWindow::IsExecutableLoaded() const
@@ -914,7 +913,7 @@ void MainWindow::focusInEvent(QFocusEvent* event)
 
 void MainWindow::outputWindow_doubleClickEvent(QMouseEvent* ev)
 {
-	if((!m_virtualMachine->HasGunListener() && !m_virtualMachine->HasTouchListener()) && (ev->button() == Qt::LeftButton))
+	if((!m_virtualMachine->HasGunListener() && !m_virtualMachine->HasTouchListener() && !m_guncon2_game) && (ev->button() == Qt::LeftButton))
 	{
 		on_actionToggleFullscreen_triggered();
 	}
@@ -922,59 +921,38 @@ void MainWindow::outputWindow_doubleClickEvent(QMouseEvent* ev)
 
 void MainWindow::outputWindow_mouseMoveEvent(QMouseEvent* ev)
 {
-	if(m_virtualMachine->HasGunListener() || m_guncon2)
-	{
-		auto gsHandler = m_virtualMachine->GetGSHandler();
-		if(!gsHandler) return;
-		qreal scale = 1.0;
+    auto gsHandler = m_virtualMachine->GetGSHandler();
+    if(!gsHandler) return;
+    qreal scale = 1.0;
 #if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
-		scale = devicePixelRatioF();
+    scale = devicePixelRatioF();
 #endif
-		auto presentationViewport = gsHandler->GetPresentationViewport();
-		float vpOfsX = static_cast<float>(presentationViewport.offsetX) / scale;
-		float vpOfsY = static_cast<float>(presentationViewport.offsetY) / scale;
-		float vpWidth = static_cast<float>(presentationViewport.width) / scale;
-		float vpHeight = static_cast<float>(presentationViewport.height) / scale;
-		float mouseX = ev->x();
-		float mouseY = ev->y();
-		mouseX -= vpOfsX;
-		mouseY -= vpOfsY;
-		mouseX = std::clamp<float>(mouseX, 0, vpWidth) / static_cast<float>(vpWidth);
-		mouseY = std::clamp<float>(mouseY, 0, vpHeight) / static_cast<float>(vpHeight);
-        if (m_guncon2)
-        {
-            m_guncon2_x = static_cast<int32>( ( mouseX * g_lightgun_info->width * g_lightgun_info->scale_x) / 10000 + g_lightgun_info->center_x + .5f );
-            m_guncon2_y = static_cast<int32>( ( mouseY * g_lightgun_info->height * g_lightgun_info->scale_y) / 10000 + g_lightgun_info->center_y + .5f );
-            // todo: offscreen support
-            guncon2_set_state(m_virtualMachine, 0, m_guncon2_buttons, m_guncon2_x, m_guncon2_y, false);
-        }
-        if(m_virtualMachine->HasGunListener())
-        {
-            m_virtualMachine->ReportGunPosition(mouseX, mouseY);
-        }
-	}
+    auto presentationViewport = gsHandler->GetPresentationViewport();
+    float vpOfsX = static_cast<float>(presentationViewport.offsetX) / scale;
+    float vpOfsY = static_cast<float>(presentationViewport.offsetY) / scale;
+    float vpWidth = static_cast<float>(presentationViewport.width) / scale;
+    float vpHeight = static_cast<float>(presentationViewport.height) / scale;
+    float mouseX = ev->x();
+    float mouseY = ev->y();
+    mouseX -= vpOfsX;
+    mouseY -= vpOfsY;
+    mouseX = std::clamp<float>(mouseX, 0, vpWidth) / static_cast<float>(vpWidth);
+    mouseY = std::clamp<float>(mouseY, 0, vpHeight) / static_cast<float>(vpHeight);
+
+    m_guncon2_x = static_cast<int32>( ( mouseX * g_lightgun_info->width * g_lightgun_info->scale_x) / 10000 + g_lightgun_info->center_x + .5f );
+    m_guncon2_y = static_cast<int32>( ( mouseY * g_lightgun_info->height * g_lightgun_info->scale_y) / 10000 + g_lightgun_info->center_y + .5f );
+    // todo: offscreen support
+    guncon2_set_position(m_virtualMachine, 0, m_guncon2_x, m_guncon2_y, false);
+
+    if(m_virtualMachine->HasGunListener())
+    {
+        m_virtualMachine->ReportGunPosition(mouseX, mouseY);
+    }
 }
 
 void MainWindow::outputWindow_mousePressEvent(QMouseEvent* ev)
 {
 	m_qtMouseInputProvider->OnMousePress(ev->button());
-    if(m_guncon2)
-    {
-        switch(ev->button()) 
-        {
-            case Qt::LeftButton:
-                m_guncon2_buttons |= Iop::CGunCon2UsbDevice::GUN_TRIGGER;
-                break;
-            case Qt::RightButton:
-                m_guncon2_buttons |= Iop::CGunCon2UsbDevice::GUN_A;
-                break;
-            case Qt::MiddleButton:
-                m_guncon2_buttons |= Iop::CGunCon2UsbDevice::GUN_CALIBRATE;
-                break;
-        }
-        // todo: offscreen support
-        guncon2_set_state(m_virtualMachine, 0, m_guncon2_buttons, m_guncon2_x, m_guncon2_y, false);
-    }
     
 	if(m_virtualMachine->HasTouchListener() && (ev->button() == Qt::LeftButton))
 	{
@@ -1004,23 +982,7 @@ void MainWindow::outputWindow_mousePressEvent(QMouseEvent* ev)
 void MainWindow::outputWindow_mouseReleaseEvent(QMouseEvent* ev)
 {
 	m_qtMouseInputProvider->OnMouseRelease(ev->button());
-    if(m_guncon2)
-    {
-        switch(ev->button()) 
-        {
-            case Qt::LeftButton:
-                m_guncon2_buttons &= ~Iop::CGunCon2UsbDevice::GUN_TRIGGER;
-                break;
-            case Qt::RightButton:
-                m_guncon2_buttons &= ~Iop::CGunCon2UsbDevice::GUN_A;
-                break;
-            case Qt::MiddleButton:
-                m_guncon2_buttons &= ~Iop::CGunCon2UsbDevice::GUN_CALIBRATE;
-                break;
-        }
-        // todo: offscreen support
-        guncon2_set_state(m_virtualMachine, 0, m_guncon2_buttons, m_guncon2_x, m_guncon2_y, false);
-    }
+
 	if(m_virtualMachine->HasTouchListener())
 	{
 		m_virtualMachine->ReleaseScreenPosition();
@@ -1332,3 +1294,4 @@ void MainWindow::SetupDebugger()
 
 #endif //DEBUGGER_INCLUDED
 }
+

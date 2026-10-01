@@ -1,6 +1,7 @@
 #include "UsbGunCon2Device.h"
 #include "UsbDefs.h"
 #include "IopBios.h"
+#include "PadHandler.h"
 #include "Ps2Const.h"
 #include "states/RegisterState.h"
 
@@ -38,6 +39,21 @@ void CGunCon2UsbDevice::LoadState(const CRegisterState& state)
 	m_transferSize = state.GetRegister32(STATE_REG_TRANSFERSIZE);
 	m_transferCb = state.GetRegister32(STATE_REG_TRANSFERCB);
 	m_transferCbArg = state.GetRegister32(STATE_REG_TRANSFERCBARG);
+
+	if(m_padHandler && !m_padHandler->HasListener(this))
+	{
+		m_padHandler->InsertListener(this);
+	}
+}
+
+void CGunCon2UsbDevice::SetPadHandler(CPadHandler* padHandler)
+{
+	m_padHandler = padHandler;
+
+	if(m_padHandler && !m_padHandler->HasListener(this))
+	{
+		m_padHandler->InsertListener(this);
+	}
 }
 
 uint16 CGunCon2UsbDevice::GetId() const
@@ -88,9 +104,58 @@ void CGunCon2UsbDevice::CountTicks(uint32 ticks)
 	}
 }
 
-void CGunCon2UsbDevice::SetGunState(uint32 buttons, int32 x, int32 y, bool offscreen)
+void CGunCon2UsbDevice::SetButtonState(unsigned int padNumber, PS2::CControllerInfo::BUTTON button, bool pressed, uint8* ram)
 {
-    m_buttonState = buttons;
+	if(padNumber != m_instance)
+        return;
+
+    uint32_t mask = 0;
+    
+    switch(button)
+    {
+		case PS2::CControllerInfo::CIRCLE:
+			mask = GUN_TRIGGER; 
+			break;
+		case PS2::CControllerInfo::TRIANGLE:
+			mask = GUN_A; 
+			break;
+		case PS2::CControllerInfo::SQUARE:
+			mask = GUN_B;
+			break;
+		case PS2::CControllerInfo::CROSS:
+			mask = GUN_C; 
+			break;
+        case PS2::CControllerInfo::DPAD_UP:
+            mask = GUN_UP;
+            break;
+        case PS2::CControllerInfo::DPAD_RIGHT:
+            mask = GUN_RIGHT;
+            break;
+        case PS2::CControllerInfo::DPAD_LEFT:
+            mask = GUN_LEFT;
+            break;
+        case PS2::CControllerInfo::DPAD_DOWN:
+            mask = GUN_DOWN;
+            break;
+        case PS2::CControllerInfo::SELECT:
+            mask = GUN_SELECT;
+            break;
+        case PS2::CControllerInfo::START:
+            mask = GUN_START;
+            break;
+        case PS2::CControllerInfo::R3:
+            mask = GUN_CALIBRATE;
+            break;
+    }
+    
+    if (pressed)
+        m_buttonState |= mask;
+    else
+        m_buttonState &= ~mask;
+}
+
+void CGunCon2UsbDevice::SetGunPosition(int32 x, int32 y, bool offscreen)
+{
     if (offscreen) 
     {
         m_x = 0;
@@ -109,9 +174,20 @@ void CGunCon2UsbDevice::SetGunState(uint32 buttons, int32 x, int32 y, bool offsc
     }
 }
 
+void CGunCon2UsbDevice::SetGunState(uint32 buttons, int32 x, int32 y, bool offscreen)
+{
+    m_buttonState = buttons;
+    SetGunPosition(x,y,offscreen);
+}
+
 void CGunCon2UsbDevice::OnLldRegistered()
 {
 	m_descriptorMemPtr = m_bios.GetSysmem()->AllocateMemory(0x80, 0, 0);
+
+	if(m_padHandler && !m_padHandler->HasListener(this))
+	{
+		m_padHandler->InsertListener(this);
+	}
 }
 
 uint32 CGunCon2UsbDevice::ScanStaticDescriptor(uint32 deviceId, uint32 descriptorPtr, uint32 descriptorType)

@@ -1,12 +1,14 @@
 #pragma once
 
 #include "UsbDevice.h"
+#include "PadInterface.h"
 
 class CIopBios;
+class CPadHandler;
 
 namespace Iop
 {
-	class CGunCon2UsbDevice : public CUsbDevice
+	class CGunCon2UsbDevice : public CUsbDevice, public CPadInterface
 	{
 	public:
 		enum
@@ -36,6 +38,9 @@ namespace Iop
 		CGunCon2UsbDevice(CIopBios&, uint8*, int);
 
 		uint16 GetId() const override;
+
+        void SetPadHandler(CPadHandler*);
+
 		const char* GetLldName() const override;
 
 		void SaveState(CRegisterState&) const override;
@@ -51,6 +56,13 @@ namespace Iop
         void SetParameters(unsigned char*);
 
 		void SetGunState(uint32, int32, int32, bool);
+        
+		void SetGunPosition(int32, int32, bool);
+		//CPadInterface
+		void SetButtonState(unsigned int, PS2::CControllerInfo::BUTTON, bool, uint8*) override;
+		void SetAxisState(unsigned int, PS2::CControllerInfo::BUTTON, uint8, uint8*) override{};
+		void GetVibration(unsigned int, uint8& largeMotor, uint8& smallMotor) override{};
+		CPadHandler* m_padHandler = nullptr;
 
 	private:
 		CIopBios& m_bios;
@@ -69,6 +81,6 @@ namespace Iop
         int32 m_dx = 0;
         int32 m_dy = 0;
         int m_instance = 0;
-        bool m_progressive = 0;
+        bool m_progressive = false;
 	};
 }

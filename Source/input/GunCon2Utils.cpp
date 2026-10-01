@@ -71,14 +71,17 @@ bool load_gun_info(const char* gameName)
     return false;
 }
 
-void register_guncon2(CPS2VM* vm, int instance) 
+void register_guncon2(CPS2VM* vm, int instance, bool padMode) 
 {
     auto bios = vm->m_iop->m_bios.get();
     auto usbd = dynamic_cast<CIopBios*>(bios)->GetUsbd();
     auto ram = vm->m_iop->m_ram;
     auto device = usbd->GetDevice<Iop::CGunCon2UsbDevice>(instance);
-    if (!device)
+    if (!device) {
         usbd->RegisterDevice(std::make_unique<Iop::CGunCon2UsbDevice>(*dynamic_cast<CIopBios*>(bios), ram, instance));
+        device = usbd->GetDevice<Iop::CGunCon2UsbDevice>(instance);
+    }
+    vm->RegisterGunCon2PadHandler(padMode);
 }
 
 void guncon2_set_state(CPS2VM* vm, int instance, uint32 buttons, int32 x, int32 y, bool offscreen)
@@ -91,3 +94,26 @@ void guncon2_set_state(CPS2VM* vm, int instance, uint32 buttons, int32 x, int32 
         return;
     device->SetGunState(buttons,x,y,offscreen);
 }
+
+void guncon2_set_position(CPS2VM* vm, int instance, int32 x, int32 y, bool offscreen)
+{
+    if (instance<0)
+        return;
+	auto iopOs = dynamic_cast<CIopBios*>(vm->m_iop->m_bios.get());
+    auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>(instance);
+    if (!device)
+        return;
+    device->SetGunPosition(x,y,offscreen);
+}
+
+void guncon2_set_button(CPS2VM* vm, int instance, PS2::CControllerInfo::BUTTON button, bool pressed)
+{
+    if (instance<0)
+        return;
+	auto iopOs = dynamic_cast<CIopBios*>(vm->m_iop->m_bios.get());
+    auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>(instance);
+    if (!device)
+        return;
+    device->SetButtonState(instance, button, pressed, nullptr);
+}
+
