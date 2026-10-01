@@ -42,11 +42,6 @@ static void update_gun(CPS2VM* vm, unsigned port)
     if (instance < 0)
         return;
     
-	auto iopOs = dynamic_cast<CIopBios*>(vm->m_iop->m_bios.get());
-    auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>(instance);
-    if (!device)
-        return;
-    
     uint32_t buttons = 0;
     if (g_input_state_cb(port, RETRO_DEVICE_LIGHTGUN, 0, RETRO_DEVICE_ID_LIGHTGUN_AUX_A)) 
         buttons |= Iop::CGunCon2UsbDevice::GUN_A;
@@ -81,7 +76,7 @@ static void update_gun(CPS2VM* vm, unsigned port)
     
     if (offscreen || offscreen_shot) 
     {
-        device->SetGunState(buttons,0,0,true);
+        guncon2_set_state(vm,instance,buttons,0,0,true);
         return;
     }
     
@@ -93,7 +88,7 @@ static void update_gun(CPS2VM* vm, unsigned port)
 	int32 y = ( (screenY * g_lightgun_info->height) / 0x100 * g_lightgun_info->scale_y + 0x100 * 5000) / (0x100 * 10000)
                     + g_lightgun_info->center_y;
                     
-    device->SetGunState(buttons,x,y,false);
+    guncon2_set_state(vm,instance,buttons,x,y,false);
 }
 
 void update_guns(CPS2VM* vm) 

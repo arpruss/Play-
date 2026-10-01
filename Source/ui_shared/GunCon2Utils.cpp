@@ -80,3 +80,14 @@ void register_guncon2(CPS2VM* vm, int instance)
     if (!device)
         usbd->RegisterDevice(std::make_unique<Iop::CGunCon2UsbDevice>(*dynamic_cast<CIopBios*>(bios), ram, instance));
 }
+
+void guncon2_set_state(CPS2VM* vm, int instance, uint32 buttons, int32 x, int32 y, bool offscreen)
+{
+    if (instance<0)
+        return;
+	auto iopOs = dynamic_cast<CIopBios*>(vm->m_iop->m_bios.get());
+    auto device = iopOs->GetUsbd()->GetDevice<Iop::CGunCon2UsbDevice>(instance);
+    if (!device)
+        return;
+    device->SetGunState(buttons,x,y,offscreen);
+}
