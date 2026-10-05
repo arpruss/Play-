@@ -100,6 +100,7 @@ MainWindow::MainWindow(QWidget* parent)
 #endif
 
 	m_pauseFocusLost = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_UI_PAUSEWHENFOCUSLOST);
+    m_showCursor = CAppConfig::GetInstance().GetPreferenceBoolean(PREF_UI_SHOWCURSOR);
 	auto lastPath = CAppConfig::GetInstance().GetPreferencePath(PREF_PS2_CDROM0_PATH);
 	std::error_code lastPathExistsErrorCode;
 	if(fs::exists(lastPath, lastPathExistsErrorCode))
@@ -119,9 +120,9 @@ MainWindow::MainWindow(QWidget* parent)
 	addAction(ui->actionPause_Resume);
 	addAction(ui->actionToggleFullscreen);
 	addAction(ui->actionToggleCursor);
-    ui->actionToggleCursor->setChecked(true);
+    ui->actionToggleCursor->setChecked(m_showCursor);
 	ui->actionToggleCursor->setShortcut(QKeySequence(Qt::Key_F11));
-
+    
 #ifdef WIN32
 	ui->actionToggleFullscreen->setShortcut(QKeySequence(Qt::ALT + Qt::Key_Return));
 #endif
@@ -264,6 +265,11 @@ void MainWindow::SetupGsHandler()
 
 	m_OnNewFrameConnection = m_virtualMachine->OnNewFrame.Connect(std::bind(&CStatsManager::OnNewFrame, &CStatsManager::GetInstance(), m_virtualMachine));
 	m_OnGsNewFrameConnection = m_virtualMachine->m_ee->m_gs->OnNewFrame.Connect(std::bind(&CStatsManager::OnGsNewFrame, &CStatsManager::GetInstance(), std::placeholders::_1));
+
+    if (m_showCursor)
+        m_outputwindow->unsetCursor();
+    else
+        m_outputwindow->setCursor(Qt::BlankCursor);
 }
 
 void MainWindow::SetupSoundHandler()
@@ -420,6 +426,7 @@ void MainWindow::BootElf(fs::path filePath)
 		TryRegisterBootable(filePath);
 		TryUpdateLastBootedTime(filePath);
 		m_lastOpenCommand = LastOpenCommand(BootType::ELF, filePath);
+        m_isArcade = false;
 		UpdateUI();
 	}
 	m_msgLabel->setText(QString("Loaded executable '%1'.")
@@ -445,6 +452,7 @@ void MainWindow::BootCDROM()
 		TryRegisterBootable(filePath);
 		TryUpdateLastBootedTime(filePath);
 		m_lastOpenCommand = LastOpenCommand(BootType::CD, filePath);
+        m_isArcade = false;
 		UpdateUI();
 	}
 	m_msgLabel->setText(QString("Loaded executable '%1' from cdrom0.")
@@ -458,6 +466,7 @@ void MainWindow::BootArcadeMachine(fs::path arcadeDefPath)
 		ArcadeUtils::BootArcadeMachine(m_virtualMachine, arcadeDefPath);
 		m_lastOpenCommand = LastOpenCommand(BootType::ARCADE, arcadeDefPath);
 		m_msgLabel->setText(QString("Started arcade machine '%1'.").arg(arcadeDefPath.filename().c_str()));
+        m_isArcade = true;
 		UpdateUI();
 	}
 	catch(const std::exception& e)
@@ -848,8 +857,16 @@ void MainWindow::HandleOnExecutableChange()
 	auto titleString = QString("Play! - [ %1 ] - %2").arg(m_virtualMachine->m_ee->m_os->GetExecutableName(), QString(PLAY_VERSION));
 	setWindowTitle(titleString);
 	ui->bootablesView->AsyncResetModel(true);
-    m_guncon2_game = load_gun_info(m_virtualMachine->m_ee->m_os->GetExecutableName());
-    register_guncon2(m_virtualMachine, 0, true); 
+    if (m_isArcade) 
+    {
+        m_gunCon2Game = false;
+    }
+    else 
+    {
+        const struct Iop::LightgunInfo* infoP  = GetLightgunInfo(m_virtualMachine->m_ee->m_os->GetExecutableName());
+        m_gunCon2Game = (infoP == nullptr); // don't specialize UI to guncon2 if not on whitelist, but still register
+        m_virtualMachine->RegisterGunCon2(0, infoP, true);
+    }
 }
 
 bool MainWindow::IsExecutableLoaded() const
@@ -878,6 +895,7 @@ void MainWindow::RegisterPreferences()
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_UI_PAUSEWHENFOCUSLOST, true);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_UI_SHOWEECPUUSAGE, false);
 	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_UI_SHOWEXITCONFIRMATION, true);
+	CAppConfig::GetInstance().RegisterPreferenceBoolean(PREF_UI_SHOWCURSOR, true);
 	CAppConfig::GetInstance().RegisterPreferenceInteger(PREF_VIDEO_GS_HANDLER, SettingsDialog::GS_HANDLERS::OPENGL);
 	CAppConfig::GetInstance().RegisterPreferenceString(PREF_INPUT_PAD1_PROFILE, "default");
 }
@@ -913,7 +931,7 @@ void MainWindow::focusInEvent(QFocusEvent* event)
 
 void MainWindow::outputWindow_doubleClickEvent(QMouseEvent* ev)
 {
-	if((!m_virtualMachine->HasGunListener() && !m_virtualMachine->HasTouchListener() && !m_guncon2_game) && (ev->button() == Qt::LeftButton))
+	if((!m_virtualMachine->HasGunListener() && !m_virtualMachine->HasTouchListener() && !m_gunCon2Game) && (ev->button() == Qt::LeftButton))
 	{
 		on_actionToggleFullscreen_triggered();
 	}
@@ -923,30 +941,24 @@ void MainWindow::outputWindow_mouseMoveEvent(QMouseEvent* ev)
 {
     auto gsHandler = m_virtualMachine->GetGSHandler();
     if(!gsHandler) return;
-    qreal scale = 1.0;
-#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
-    scale = devicePixelRatioF();
-#endif
-    auto presentationViewport = gsHandler->GetPresentationViewport();
-    float vpOfsX = static_cast<float>(presentationViewport.offsetX) / scale;
-    float vpOfsY = static_cast<float>(presentationViewport.offsetY) / scale;
-    float vpWidth = static_cast<float>(presentationViewport.width) / scale;
-    float vpHeight = static_cast<float>(presentationViewport.height) / scale;
-    float mouseX = ev->x();
-    float mouseY = ev->y();
-    mouseX -= vpOfsX;
-    mouseY -= vpOfsY;
-    mouseX = std::clamp<float>(mouseX, 0, vpWidth) / static_cast<float>(vpWidth);
-    mouseY = std::clamp<float>(mouseY, 0, vpHeight) / static_cast<float>(vpHeight);
-
-    m_guncon2_x = static_cast<int32>( ( mouseX * g_lightgun_info->width * g_lightgun_info->scale_x) / 10000 + g_lightgun_info->center_x + .5f );
-    m_guncon2_y = static_cast<int32>( ( mouseY * g_lightgun_info->height * g_lightgun_info->scale_y) / 10000 + g_lightgun_info->center_y + .5f );
-    // todo: offscreen support
-    guncon2_set_position(m_virtualMachine, 0, m_guncon2_x, m_guncon2_y, false);
 
     if(m_virtualMachine->HasGunListener())
     {
-        m_virtualMachine->ReportGunPosition(mouseX, mouseY);
+        qreal scale = 1.0;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0)
+        scale = devicePixelRatioF();
+#endif
+        auto presentationViewport = gsHandler->GetPresentationViewport();
+        float vpOfsX = static_cast<float>(presentationViewport.offsetX) / scale;
+        float vpOfsY = static_cast<float>(presentationViewport.offsetY) / scale;
+        float vpWidth = static_cast<float>(presentationViewport.width) / scale;
+        float vpHeight = static_cast<float>(presentationViewport.height) / scale;
+        float mouseX = ev->x();
+        float mouseY = ev->y();
+        mouseX -= vpOfsX;
+        mouseY -= vpOfsY;
+        
+        m_virtualMachine->ReportGunPosition(mouseX / static_cast<float>(vpWidth), mouseY / static_cast<float>(vpHeight));
     }
 }
 
@@ -996,6 +1008,7 @@ void MainWindow::on_actionToggleCursor_triggered()
         m_outputwindow->unsetCursor();
     else
         m_outputwindow->setCursor(Qt::BlankCursor);
+	CAppConfig::GetInstance().SetPreferenceBoolean(PREF_UI_SHOWCURSOR, m_showCursor);
 }
 
 void MainWindow::on_actionToggleFullscreen_triggered()
